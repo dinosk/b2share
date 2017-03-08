@@ -30,7 +30,7 @@ from b2share_unit_tests.helpers import (
     create_record, generate_record_data, subtest_file_bucket_permissions,
     create_user,
 )
-from b2share.modules.records.tasks import update_expired_embargos
+from b2share.modules.records.tasks import update_expired_embargoes
 # from invenio_records_files.api import Record
 from invenio_db import db
 from invenio_search import current_search
@@ -98,11 +98,11 @@ def test_update_expired_embargo(app, test_communities, login_user, cli_cmd):
 
     with app.app_context():
         if not cli_cmd:
-            update_expired_embargos.delay()
+            update_expired_embargoes.delay()
         else:
             script_info = ScriptInfo(create_app=lambda info: app)
             runner = CliRunner()
-            result = runner.invoke(b2records, ['update_expired_embargoes'], obj=script_info)
+            result = runner.invoke(b2records, ['update_expired_embargoes_now'], obj=script_info)
             assert result.exit_code == 0
 
         # refresh index to make records searchable
