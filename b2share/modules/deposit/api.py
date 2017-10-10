@@ -28,6 +28,21 @@ import uuid
 from contextlib import contextmanager
 from enum import Enum
 from urllib.parse import urlparse, urlunparse
+from sqlalchemy.exc import IntegrityError
+
+from flask import url_for, g, current_app
+from invenio_db import db
+from invenio_deposit.api import Deposit as DepositRecord
+from invenio_records_files.models import RecordsBuckets
+from jsonschema.validators import validator_for
+from jsonschema.exceptions import ValidationError
+from b2share.modules.schemas.api import CommunitySchema
+from b2share.modules.deposit.minters import b2share_deposit_uuid_minter
+from b2share.modules.deposit.fetchers import b2share_deposit_uuid_fetcher
+from invenio_files_rest.models import Bucket, FileInstance, ObjectVersion
+from invenio_pidstore.models import PersistentIdentifier
+from invenio_records_files.models import RecordsBuckets
+from invenio_records.errors import MissingModelError
 from flask import url_for, g
 from flask_login import current_user
 from jsonschema.validators import validator_for
@@ -53,6 +68,8 @@ from .errors import (InvalidDepositError,
 from b2share.modules.communities.api import Community
 from b2share.modules.communities.errors import CommunityDoesNotExistError
 from b2share.modules.communities.workflows import publication_workflows
+from b2share.modules.records.api import B2ShareRecord
+from b2share.modules.records.errors import InvalidRecordError
 from b2share.modules.records.utils import is_publication
 from b2share.modules.records.providers import RecordUUIDProvider
 from b2share.modules.access.policies import is_under_embargo
@@ -73,10 +90,10 @@ class PublicationStates(Enum):
     """Deposit is published."""
 
 
-class Deposit(InvenioDeposit):
+class Deposit(B2ShareRecord):
     """B2Share Deposit API."""
 
-    published_record_class = Record
+    published_record_class = B2ShareRecord
     """Record API class used for published records."""
 
     deposit_minter = staticmethod(b2share_deposit_uuid_minter)
@@ -197,6 +214,16 @@ class Deposit(InvenioDeposit):
             schema,
             _external=True
         )
+
+        bucket = Bucket.create(storage_class=current_app.config[
+            'DEPOSIT_DEFAULT_STORAGE_CLASS'
+        ])
+
+        if 'b2safe_pids' in data:
+            create_b2safe_file(data['b2safe_pids'], bucket)
+            data['_deposit']['b2safe_pids'] = data['b2safe_pids']
+            del data['b2safe_pids']
+
         deposit = super(Deposit, cls).create(data, id_=id_)
 
         # create file bucket
@@ -221,7 +248,7 @@ class Deposit(InvenioDeposit):
 
     def validate(self, **kwargs):
         if ('publication_state' in self and
-            self['publication_state'] == PublicationStates.draft.name):
+                self['publication_state'] == PublicationStates.draft.name):
             if 'community' not in self:
                 raise ValidationError('Missing required field "community"')
             try:
@@ -252,6 +279,35 @@ class Deposit(InvenioDeposit):
         This method extends the default implementation by publishing the
         deposition when 'publication_state' is set to 'published'.
         """
+        if 'b2safe_pids' in self:
+            deposit_id = self['_deposit']['id']
+            recid = PersistentIdentifier.query.filter_by(
+                pid_value=deposit_id).first()
+            assert recid.status == 'R'
+            record_bucket = RecordsBuckets.query.filter_by(
+                record_id=recid.pid_value).first()
+            bucket = Bucket.query.filter_by(id=record_bucket.bucket_id).first()
+            object_versions = ObjectVersion.query.filter_by(
+                bucket_id=bucket.id).all()
+            # for the existing files
+            for object_version in object_versions:
+                if object_version.file is None or \
+                        object_version.file.storage_class != 'B':
+                    continue
+                # check that they are still in the file pids list or remove
+                if object_version.key not in self['b2safe_pids']:
+                    ObjectVersion.delete(bucket,
+                                         object_version.key)
+                # check that the uri is still the same or update it
+                elif object_version.file.uri != \
+                        self['b2safe_pids'][object_version.key]:
+                    db.session.query(FileInstance).\
+                        filter_by(key=object_version.key).\
+                        update({"uri": self['b2safe_pids'][object_version.key]})
+            create_b2safe_file(self['b2safe_pids'], bucket)
+            self['_deposit']['b2safe_pids'] = self['b2safe_pids']
+            del self['b2safe_pids']
+
         if self.model is None or self.model.json is None:
             raise MissingModelError()
 
@@ -303,7 +359,7 @@ class Deposit(InvenioDeposit):
 
     def publish(self):
         self['publication_state'] = PublicationStates.published.name
-        return self.commit() # calls super(Deposit, self).publish()
+        return self.commit()  # calls super(Deposit, self).publish()
 
     def submit(self, commit=True):
         """Submit a record for review.
@@ -353,7 +409,8 @@ def create_file_pids(record_metadata):
     from flask import current_app
     from b2share.modules.records.b2share_epic import createHandle
     from b2share.modules.records.errors import EpicPIDError
-    throw_on_failure = current_app.config.get('CFG_FAIL_ON_MISSING_FILE_PID', False)
+    throw_on_failure = current_app.config.get(
+        'CFG_FAIL_ON_MISSING_FILE_PID', False)
     for f in record_metadata.get('_files'):
         if f.get('ePIC_PID'):
             continue
@@ -370,6 +427,20 @@ def create_file_pids(record_metadata):
                 raise e
             else:
                 current_app.logger.warning(e)
+
+
+def create_b2safe_file(file_pids, bucket):
+    """Create a FileInstance which contains a PID in its uri."""
+    for key in file_pids:
+        try:
+            file_instance = FileInstance.get_by_uri(file_pids[key])
+            if file_instance is None:
+                file_instance = FileInstance.create()
+                file_instance.set_uri(file_pids[key], 1, 0, storage_class='B')
+            assert file_instance.storage_class == 'B'
+            ObjectVersion.create(bucket, key, file_instance.id)
+        except IntegrityError as e:
+            raise InvalidDepositError('File URI already exists.')
 
 
 def find_version_master_and_previous_record(version_of):
