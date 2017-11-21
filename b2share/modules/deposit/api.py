@@ -90,7 +90,7 @@ class PublicationStates(Enum):
     """Deposit is published."""
 
 
-class Deposit(B2ShareRecord):
+class Deposit(InvenioDeposit):
     """B2Share Deposit API."""
 
     published_record_class = B2ShareRecord
@@ -225,15 +225,14 @@ class Deposit(B2ShareRecord):
             del data['b2safe_pids']
 
         deposit = super(Deposit, cls).create(data, id_=id_)
-
-        # create file bucket
-        if prev_version and prev_version.files:
-            # Clone the bucket from the previous version. This doesn't
-            # duplicate files.
-            bucket = prev_version.files.bucket.snapshot(lock=False)
-            bucket.locked = False
-        else:
-            bucket = deposit._create_bucket()
+        # # create file bucket
+        # if prev_version and prev_version.files:
+        #     # Clone the bucket from the previous version. This doesn't
+        #     # duplicate files.
+        #     bucket = prev_version.files.bucket.snapshot(lock=False)
+        #     bucket.locked = False
+        # else:
+        #     bucket = deposit._create_bucket()
 
         db.session.add(bucket)
         db.session.add(RecordsBuckets(

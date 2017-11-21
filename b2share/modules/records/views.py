@@ -36,12 +36,11 @@ from invenio_pidstore.errors import PIDDoesNotExistError, PIDRedirectedError
 from invenio_pidstore.models import PersistentIdentifier
 from invenio_pidrelations.contrib.versioning import PIDVersioning
 from invenio_pidrelations.models import PIDRelation
-from invenio_records_files.api import Record
+from invenio_records_files.api import Record, RecordsBuckets
 from invenio_rest.errors import RESTValidationError
 from invenio_search import RecordsSearch
 from jsonschema.exceptions import ValidationError
 from invenio_records.models import RecordMetadata
-from invenio_records_files.api import RecordsBuckets
 from invenio_records_rest.views import (pass_record,
                                         RecordsListResource, RecordResource,
                                         RecordsListOptionsResource,
@@ -55,7 +54,6 @@ from invenio_mail.tasks import send_email
 from invenio_rest import ContentNegotiatedMethodView
 from invenio_accounts.models import User
 
-from b2share.modules.records.api import B2ShareRecord
 from b2share.modules.records.providers import RecordUUIDProvider
 from b2share.modules.deposit.serializers import json_v1_response as \
     deposit_serializer
@@ -299,6 +297,7 @@ class B2ShareRecordsListResource(RecordsListResource):
         :returns: The created record.
         """
         # import deposit dependencies here in order to avoid recursive imports
+        from b2share.modules.records.api import B2ShareRecord
         from b2share.modules.deposit.links import deposit_links_factory
         if request.content_type not in self.loaders:
             abort(415)
