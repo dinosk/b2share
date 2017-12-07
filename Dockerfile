@@ -1,7 +1,7 @@
 FROM centos:7
 EXPOSE 5000
 
-RUN rpm -iUvh http://dl.fedoraproject.org/pub/epel/7/x86_64/e/epel-release-7-10.noarch.rpm
+RUN rpm -iUvh http://dl.fedoraproject.org/pub/epel/7/x86_64/Packages/e/epel-release-7-11.noarch.rpm
 
 RUN yum -y update
 
@@ -71,17 +71,21 @@ ADD dockerize/uwsgi.ini b2share/uwsgi/uwsgi.ini
 #
 
 WORKDIR /eudat/b2share
+ADD setup.py setup.py
+ADD b2share/version.py b2share/version.py
+ADD requirements.txt requirements.txt
+
+RUN pip install -r requirements.txt
+
+WORKDIR /eudat/b2share/b2share-b2safe
 RUN git clone https://github.com/dinosk/b2share.git
-WORKDIR /eudat/b2share/b2share
-RUN git checkout b2safe-pids
-RUN pip install .
-COPY dockerize/records /usr/lib/python3.4/site-packages/b2share/modules/records/mappings/records
-COPY dockerize/deposits /usr/lib/python3.4/site-packages/b2share/modules/deposit/mappings/deposits
-COPY b2share/modules/schemas/root_schemas /usr/lib/python3.4/site-packages/b2share/modules/schemas/root_schemas
+WORKDIR /eudat/b2share/b2share-b2safe/b2share
+RUN git checkout docker-b2safe
+RUN pip install -e .
 
 WORKDIR /eudat/b2share/demo
 ADD demo/setup.py setup.py
-RUN pip install .
+RUN pip install -e .
 
 COPY dockerize/b2share.sh /eudat/
 COPY dockerize/supervisord.conf /etc/
